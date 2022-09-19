@@ -6,6 +6,7 @@ use std::sync::{
 use chrono::Local;
 use clap::ArgMatches;
 use rand::Rng;
+use reqwest::StatusCode;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 
@@ -15,7 +16,7 @@ const ENC_TOKEN:&str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE2OTQ1MzQ
 pub struct FuckSheep {
     parallel: usize,
     token: Option<String>,
-    uid:Option<String>,
+    uid: String,
     times: usize,
 }
 
@@ -25,7 +26,7 @@ impl Default for FuckSheep {
             parallel: num_cpus::get(),
             token: None,
             times: 1000,
-            uid:None
+            uid: "".to_string(),
         }
     }
 }
@@ -43,52 +44,53 @@ impl FuckSheep {
             .value_of("parallel")
             .unwrap_or(&num_cpus::get().to_string())
             .parse()?;
-        let token = args
-            .value_of("token");
         let times: usize = args
             .value_of("times")
-            .expect("刷的次数为必填项，不得为空")
+            .unwrap_or("1000")
             .parse()?;
-        let user_id = args.value_of("uid");
-
-        if user_id.is_none() && token.is_none() {
-            eprintln!("UserID和Token必须设置一个！");
-            std::process::exit(1);
-        }
+        let user_id = args.value_of("uid").expect("UID不得为空");
 
         self.parallel = parallel;
         self.times = times;
-        self.token = Some(token.as_deref().unwrap_or("").to_string());
-        self.uid = Some(user_id.as_deref().unwrap_or("").to_string());
+        self.token = None;
+        self.uid = user_id.to_string();
         Ok(())
     }
 
-    pub async fn get_token(&mut self) -> Result<(),Box<dyn std::error::Error>>{
-        let client=reqwest::ClientBuilder::new()
-        .timeout(Duration::from_secs(60))
-        .build()?;
+    pub async fn get_token(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let client = reqwest::ClientBuilder::new()
+            .timeout(Duration::from_secs(60))
+            .build()?;
 
-        let user_info=client.get("https://cat-match.easygame2021.com/sheep/v1/game/user_info")
-        .query(&[("uid",self.uid.as_ref().unwrap_or(&"".to_string())),("t",&ENC_TOKEN.to_string())])
-        .send()
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
+        let user_info = client
+            .get("https://cat-match.easygame2021.com/sheep/v1/game/user_info")
+            .query(&[("uid", &self.uid), ("t", &ENC_TOKEN.to_string())])
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
 
         let uuid = user_info["data"]["wx_open_id"].as_str();
 
-        let user_info = client.post("https://cat-match.easygame2021.com/sheep/v1/user/login_oppo")
-        .json(&serde_json::json!({
-            "uid":uuid.unwrap_or(""),
-            "avatar":"1",
-            "nick_name":"1",
-            "sex":1
-        })).send()
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
+        let user_info = client
+            .post("https://cat-match.easygame2021.com/sheep/v1/user/login_oppo")
+            .json(&serde_json::json!({
+                "uid":uuid.unwrap_or(""),
+                "avatar":"1",
+                "nick_name":"1",
+                "sex":1
+            }))
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
 
-        self.token = Some(user_info["data"]["token"].as_str().unwrap_or("").to_string());
+        self.token = Some(
+            user_info["data"]["token"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
+        );
         Ok(())
     }
 
@@ -105,12 +107,13 @@ impl FuckSheep {
             let total = total.to_owned();
             let times = self.times.to_owned();
             let token = self.token.to_owned();
-            let mut rng=rand::thread_rng();
+            let mut rng = rand::thread_rng();
             let rand_time = rng.gen_range(1..3600);
+            let uid = self.uid.to_owned();
             let handle = tokio::spawn(async move {
                 let user_token = token.to_owned().unwrap_or("".to_string());
                 loop {
-                    let result = client.get(format!("https://cat-match.easygame2021.com/sheep/v1/game/game_over?rank_score=1&rank_state=1&rank_time={}&rank_role=1&skin=1",rand_time))
+                    let result = client.get(format!("https://cat-match.easygame2021.com/sheep/v1/game/user_rank_info?rank_score=1&rank_state=1&rank_time={}&rank_role=1&skin=1&uid={}",rand_time,uid))
                     .header("t", &user_token)
                     .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.28(0x18001c25) NetType/WIFI Language/zh_CN")
                     .header("Referer", "https://servicewechat.com/wx141bfb9b73c970a9/15/page-frame.html")
@@ -118,8 +121,15 @@ impl FuckSheep {
                 .await;
 
                     match result {
-                        Ok(_) => {
-                            let result = client.get("https://cat-match.easygame2021.com/sheep/v1/game/topic_game_over?rank_score=1&rank_state=1&rank_time=1&rank_role=2&skin=1")
+                        Ok(r) => {
+                            if r.status() != StatusCode::OK {
+                                eprintln!(
+                                    "请求时发生错误，状态码：{}，本次请求请忽略。",
+                                    r.status()
+                                );
+                                continue;
+                            }
+                            let result = client.get(format!("https://cat-match.easygame2021.com/sheep/v1/game/topic_game_over?rank_score=1&rank_state=1&rank_time={}&rank_role=2&skin=1",rand_time))
                             .header("t", &user_token)
                             .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.28(0x18001c25) NetType/WIFI Language/zh_CN")
                             .header("Referer", "https://servicewechat.com/wx141bfb9b73c970a9/15/page-frame.html")
@@ -127,7 +137,14 @@ impl FuckSheep {
                             .await;
 
                             match result {
-                                Ok(_) => {
+                                Ok(r) => {
+                                    if r.status() != StatusCode::OK {
+                                        eprintln!(
+                                            "请求时发生错误，状态码：{}，本次请求请忽略。",
+                                            r.status()
+                                        );
+                                        continue;
+                                    }
                                     total.fetch_add(1, Ordering::SeqCst);
                                     if total.load(Ordering::SeqCst) >= times {
                                         break;
@@ -164,5 +181,54 @@ impl FuckSheep {
         print_task.abort();
 
         Ok(total.load(Ordering::SeqCst))
+    }
+
+    pub async fn start_once(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let client = reqwest::ClientBuilder::new()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+
+        let mut rand_time = rand::thread_rng();
+        let rand_time = rand_time.gen_range(1..3600);
+        let result = client.get(format!("https://cat-match.easygame2021.com/sheep/v1/game/user_rank_info?rank_score=1&rank_state=1&rank_time={}&rank_role=1&skin=1&uid={}",rand_time,self.uid))
+                    .header("t", self.token.as_ref().unwrap_or(&"".to_string()))
+                    .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.28(0x18001c25) NetType/WIFI Language/zh_CN")
+                    .header("Referer", "https://servicewechat.com/wx141bfb9b73c970a9/15/page-frame.html")
+                    .send()
+                .await;
+
+        match result {
+            Ok(r) => {
+                if r.status() != StatusCode::OK {
+                    eprintln!("请求时发生错误，状态码：{}，本次请求请忽略。", r.status());
+                    std::process::exit(1);
+                }
+                let result = client.get(format!("https://cat-match.easygame2021.com/sheep/v1/game/topic_game_over?rank_score=1&rank_state=1&rank_time={}&rank_role=2&skin=1",rand_time))
+                            .header("t", self.token.as_ref().unwrap_or(&"".to_string()))
+                            .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.28(0x18001c25) NetType/WIFI Language/zh_CN")
+                            .header("Referer", "https://servicewechat.com/wx141bfb9b73c970a9/15/page-frame.html")
+                            .send()
+                            .await;
+
+                match result {
+                    Ok(r) => {
+                        if r.status() != StatusCode::OK {
+                            eprintln!("请求时发生错误，状态码：{}，本次请求请忽略。", r.status());
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprint!("{:#?}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{:#?}", e);
+                std::process::exit(1)
+            }
+        }
+
+        Ok(())
     }
 }
