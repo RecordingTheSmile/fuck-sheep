@@ -44,10 +44,7 @@ impl FuckSheep {
             .value_of("parallel")
             .unwrap_or(&num_cpus::get().to_string())
             .parse()?;
-        let times: usize = args
-            .value_of("times")
-            .unwrap_or("1000")
-            .parse()?;
+        let times: usize = args.value_of("times").unwrap_or("1000").parse()?;
         let user_id = args.value_of("uid").expect("UID不得为空");
 
         self.parallel = parallel;
@@ -109,12 +106,19 @@ impl FuckSheep {
             let token = self.token.to_owned();
             let mut rng = rand::thread_rng();
             let rand_time = rng.gen_range(1..3600);
-            let uid = self.uid.to_owned();
             let handle = tokio::spawn(async move {
                 let user_token = token.to_owned().unwrap_or("".to_string());
                 loop {
-                    let result = client.get(format!("https://cat-match.easygame2021.com/sheep/v1/game/user_rank_info?rank_score=1&rank_state=1&rank_time={}&rank_role=1&skin=1&uid={}",rand_time,uid))
+                    let result = client.post(format!("https://cat-match.easygame2021.com/sheep/v1/game/game_over_ex?rank_score=1&rank_state=1&rank_time={}&rank_role=1&skin=1",rand_time))
                     .header("t", &user_token)
+                    .json(&serde_json::json!({
+                        "rank_score":1,
+                        "rank_state":1,
+                        "rank_time":rand_time,
+                        "rank_role":1,
+                        "skin":1,
+                        "MatchPlayInfo":"TpjYXRfbWF0Y2g6bHQxMjM0NTYiLCJvcGVuX2lkIjoiIiwidWlkIjo5MzIxNTgsImR"
+                    }))
                     .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.28(0x18001c25) NetType/WIFI Language/zh_CN")
                     .header("Referer", "https://servicewechat.com/wx141bfb9b73c970a9/15/page-frame.html")
                     .send()
@@ -190,12 +194,20 @@ impl FuckSheep {
 
         let mut rand_time = rand::thread_rng();
         let rand_time = rand_time.gen_range(1..3600);
-        let result = client.get(format!("https://cat-match.easygame2021.com/sheep/v1/game/user_rank_info?rank_score=1&rank_state=1&rank_time={}&rank_role=1&skin=1&uid={}",rand_time,self.uid))
-                    .header("t", self.token.as_ref().unwrap_or(&"".to_string()))
-                    .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.28(0x18001c25) NetType/WIFI Language/zh_CN")
-                    .header("Referer", "https://servicewechat.com/wx141bfb9b73c970a9/15/page-frame.html")
-                    .send()
-                .await;
+        let result = client.post(format!("https://cat-match.easygame2021.com/sheep/v1/game/game_over_ex?rank_score=1&rank_state=1&rank_time={}&rank_role=1&skin=1",rand_time))
+        .header("t", self.token.as_ref().unwrap_or(&"".to_string()))
+        .json(&serde_json::json!({
+            "rank_score":1,
+            "rank_state":1,
+            "rank_time":rand_time,
+            "rank_role":1,
+            "skin":1,
+            "MatchPlayInfo":"TpjYXRfbWF0Y2g6bHQxMjM0NTYiLCJvcGVuX2lkIjoiIiwidWlkIjo5MzIxNTgsImR"
+        }))
+        .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.28(0x18001c25) NetType/WIFI Language/zh_CN")
+        .header("Referer", "https://servicewechat.com/wx141bfb9b73c970a9/15/page-frame.html")
+        .send()
+    .await;
 
         match result {
             Ok(r) => {
